@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Real-Time Patient Dashboard</title>
+
+<style>
+:root{
+  --blue:#2f6df6;
+  --orange:#f59e0b;
+  --red:#ef4444;
+}
+
+body{
+  font-family:"Segoe UI",Roboto,Arial;
+  background:#f5f8fc;
+  margin:0;
+  text-align:center;
+}
+
+h1{color:#2563eb;margin-top:30px}
+.subtitle{color:#64748b;font-size:14px}
+
+.dashboard{
+  display:flex;
+  justify-content:center;
+  flex-wrap:wrap;
+  gap:40px;
+  margin-top:60px;
+}
+
+.card{width:180px;cursor:pointer;transition:.3s}
+.card:hover{transform:translateY(-6px)}
+
+.circle{
+  width:160px;height:160px;border-radius:50%;
+  margin:auto;color:#fff;display:flex;
+  flex-direction:column;justify-content:center;
+  box-shadow:0 15px 40px rgba(0,0,0,.15);
+  transition:.5s;
+}
+
+.circle.pulse{animation:pulse 1.2s ease-out}
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(47,109,246,.6)}
+  100%{box-shadow:0 0 0 25px rgba(47,109,246,0)}
+}
+
+.label{font-size:13px}
+.value{font-size:26px;font-weight:600}
+.status{font-size:11px}
+
+svg{margin-top:12px}
+.footer{margin:60px 0 20px;font-size:12px;color:#94a3b8}
+
+/* ===== Overlay ===== */
+.overlay{
+  position:fixed;
+  inset:0;
+  background:rgba(15,23,42,.75);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:1000;
+}
+.overlay.active{display:flex}
+
+.modal{
+  background:#fff;
+  width:90%;
+  max-width:700px;
+  border-radius:14px;
+  padding:25px;
+}
+
+.close{
+  position:absolute;
+  top:20px;right:25px;
+  cursor:pointer;
+  font-size:22px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🩺 Real-Time Patient Dashboard</h1>
+<div class="subtitle">Live vitals streamed from sensor → cloud → web</div>
+<div class="subtitle" id="updated">Last updated: --</div>
+
+<div class="dashboard">
+  <div class="card" onclick="openTrend('hr')">
+    <div class="circle" id="hrCircle">
+      <div class="label">Heart Rate</div>
+      <div class="value" id="hrVal">--</div>
+      <div class="status" id="hrStatus"></div>
+    </div>
+  </div>
+
+  <div class="card" onclick="openTrend('pr')">
+    <div class="circle" id="prCircle">
+      <div class="label">Pulse Rate</div>
+      <div class="value" id="prVal">--</div>
+      <div class="status" id="prStatus"></div>
+    </div>
+  </div>
+
+  <div class="card" onclick="openTrend('bp')">
+    <div class="circle" id="bpCircle">
+      <div class="label">Blood Pressure</div>
+      <div class="value" id="bpVal">--</div>
+      <div class="status" id="bpStatus"></div>
+    </div>
+  </div>
+
+  <div class="card" onclick="openTrend('temp')">
+    <div class="circle" id="tempCircle">
+      <div class="label">Temperature</div>
+      <div class="value" id="tempVal">--</div>
+      <div class="status" id="tempStatus"></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Medical IoT Dashboard • Flask API</div>
+
+<!-- ===== Overlay ===== -->
+<div class="overlay" id="overlay" onclick="closeTrend(event)">
+  <div class="modal">
+    <div class="close" onclick="closeTrend()">✕</div>
+    <h2 id="trendTitle">24-Hour Trend</h2>
+    <svg id="trendSvg" viewBox="0 0 600 300">
+      <polyline id="trendLine" fill="none" stroke="#2f6df6" stroke-width="3"/>
+    </svg>
+  </div>
+</div>
+
+<script>
+const historySize = 20;
+const dataHistory = { hr:[], pr:[], bp:[], temp:[] };
+
+function statusColor(v,min,max){
+  if(v < min || v > max) return ["var(--red)","Critical"];
+  if(v < min+10 || v > max-10) return ["var(--orange)","Warning"];
+  return ["var(--blue)","Normal"];
+}
+
+function spark(id, arr, w=160, h=40){
+  if(arr.length < 2) return;
+  const max=Math.max(...arr), min=Math.min(...arr);
+  const pts=arr.map((v,i)=>
+    `${(i/(arr.length-1))*w},${h-((v-min)/(max-min+1))*35}`
+  ).join(" ");
+  document.getElementById(id).setAttribute("points", pts);
+}
+
+async function update(){
+  const r = await fetch("/api/vitals");
+  const d = await r.json();
+  if(!d.heart_rate) return;
+
+  document.getElementById("updated").innerText =
+    "Last updated: " + new Date().toLocaleTimeString();
+
+  const metrics = [
+    ["hr", d.heart_rate, 60, 100],
+    ["pr", d.pulse_rate, 60, 100],
+    ["bp", parseInt(d.blood_pressure.split("/")[0]), 90, 140],
+    ["temp", d.body_temperature, 36, 38]
+  ];
+
+  metrics.forEach(([k,v,min,max])=>{
+    dataHistory[k].push(v);
+    if(dataHistory[k].length > historySize) dataHistory[k].shift();
+
+    const [color,status] = statusColor(v,min,max);
+    const c = document.getElementById(k+"Circle");
+    c.style.background = color;
+    c.classList.remove("pulse");
+    void c.offsetWidth;
+    c.classList.add("pulse");
+
+    document.getElementById(k+"Val").innerText =
+      k==="bp" ? d.blood_pressure : v + (k==="temp"?" °C":" bpm");
+    document.getElementById(k+"Status").innerText = status;
+
+    spark(k+"Line", dataHistory[k]);
+  });
+}
+
+async function openTrend(k){
+  const r = await fetch(`/api/history/${k}`);
+  const arr = await r.json();
+
+  if(arr.length < 2) return;
+
+  const max = Math.max(...arr);
+  const min = Math.min(...arr);
+
+  const pts = arr.map((v,i)=>
+    `${(i/(arr.length-1))*600},${300-((v-min)/(max-min+1))*260}`
+  ).join(" ");
+
+  const svg = document.getElementById("trendSvg");
+  svg.setAttribute("viewBox","0 0 600 300");
+
+  document.getElementById("trendLine").setAttribute("points", pts);
+  document.getElementById("trendTitle").innerText = "24-Hour Trend";
+  document.getElementById("overlay").classList.add("active");
+}
+
+function closeTrend(e){
+  if(!e || e.target.id==="overlay"){
+    document.getElementById("overlay").classList.remove("active");
+  }
+}
+
+setInterval(update,2000);
+</script>
+
+
+
+</body>
+</html>
+
